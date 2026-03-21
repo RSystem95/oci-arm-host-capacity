@@ -1,10 +1,8 @@
 name: Create OCI instance
-
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
-
 jobs:
   create-instance:
     runs-on: ubuntu-latest
@@ -29,7 +27,7 @@ jobs:
           OCI_USER_ID: ${{ secrets.OCI_USER_ID }}
           OCI_TENANCY_ID: ${{ secrets.OCI_TENANCY_ID }}
           OCI_KEY_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_PRIVATE_KEY_FILENAME: /tmp/oci_key.pem
           OCI_AVAILABILITY_DOMAIN: AD-1
           OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
           OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
