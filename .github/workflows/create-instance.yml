@@ -17,6 +17,7 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
       - name: Run
+        working-directory: ${{ github.workspace }}
         run: php run.php
         env:
           OCI_REGION: ${{ secrets.OCI_REGION }}
