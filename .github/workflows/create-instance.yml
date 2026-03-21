@@ -18,6 +18,10 @@ jobs:
         run: composer install --prefer-dist --no-progress
       - name: List files
         run: ls -la
+      - name: Save private key
+        run: |
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > /tmp/oci_key.pem
+          chmod 600 /tmp/oci_key.pem
       - name: Run
         run: php index.php
         env:
