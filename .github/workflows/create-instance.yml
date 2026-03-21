@@ -16,8 +16,9 @@ jobs:
           php-version: '8.3'
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
+      - name: List files
+        run: ls -la
       - name: Run
-        working-directory: ${{ github.workspace }}
         run: php run.php
         env:
           OCI_REGION: ${{ secrets.OCI_REGION }}
