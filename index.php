@@ -64,8 +64,8 @@ $maxRunningInstancesOfThatShape = (getenv('OCI_MAX_INSTANCES') !== false) ? (int
  * LÓGICA DE REINTENTOS PARA GITHUB ACTIONS
  * Esto multiplica las posibilidades de "cazar" una instancia liberada.
  */
-$maxAttemptsPerExecution = 10; 
-$sleepBetweenAttempts = 15;    
+$maxAttemptsPerExecution = 5;  // Bajamos a 5 intentos para ser menos "agresivos"
+$sleepBetweenAttempts = 40;    // Esperamos 40 segundos (esto nos da una ventana más segura)
 $currentAttempt = 0;
 
 while ($currentAttempt < $maxAttemptsPerExecution) {
