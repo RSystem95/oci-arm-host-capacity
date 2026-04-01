@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-
 // useful when script is being executed by cron user
 $pathPrefix = ''; // e.g. /usr/share/nginx/oci-arm-host-capacity/
 
@@ -21,8 +20,6 @@ $dotenv->safeLoad();
 /*
  * No need to modify any value in this file anymore!
  * Copy .env.example to .env and adjust there instead.
- *
- * README.md now has all the information.
  */
 $config = new OciConfig(
     getenv('OCI_REGION'),
@@ -30,7 +27,7 @@ $config = new OciConfig(
     getenv('OCI_TENANCY_ID'),
     getenv('OCI_KEY_FINGERPRINT'),
     getenv('OCI_PRIVATE_KEY_FILENAME'),
-    getenv('OCI_AVAILABILITY_DOMAIN') ?: null, // null or '' or 'jYtI:PHX-AD-1' or ['jYtI:PHX-AD-1','jYtI:PHX-AD-2']
+    getenv('OCI_AVAILABILITY_DOMAIN') ?: null,
     getenv('OCI_SUBNET_ID'),
     getenv('OCI_IMAGE_ID'),
     (int) getenv('OCI_OCPUS'),
@@ -52,74 +49,89 @@ if (getenv('CACHE_AVAILABILITY_DOMAINS')) {
 if (getenv('TOO_MANY_REQUESTS_TIME_WAIT')) {
     $api->setWaiter(new TooManyRequestsWaiter((int) getenv('TOO_MANY_REQUESTS_TIME_WAIT')));
 }
+
 $notifier = (function (): \Hitrov\Interfaces\NotifierInterface {
     /*
-     * if you have own https://core.telegram.org/bots
-     * and set TELEGRAM_BOT_API_KEY and your TELEGRAM_USER_ID in .env
-     *
-     * then you can get notified when script will succeed.
-     * otherwise - don't mind OR develop you own NotifierInterface
-     * to e.g. send SMS or email.
+     * Configurado para Telegram por defecto si las keys están en el .env
      */
     return new \Hitrov\Notification\Telegram();
 })();
 
 $shape = getenv('OCI_SHAPE');
+$maxRunningInstancesOfThatShape = (getenv('OCI_MAX_INSTANCES') !== false) ? (int) getenv('OCI_MAX_INSTANCES') : 1;
 
-$maxRunningInstancesOfThatShape = 1;
-if (getenv('OCI_MAX_INSTANCES') !== false) {
-    $maxRunningInstancesOfThatShape = (int) getenv('OCI_MAX_INSTANCES');
-}
+/**
+ * LÓGICA DE REINTENTOS PARA GITHUB ACTIONS
+ * Esto multiplica las posibilidades de "cazar" una instancia liberada.
+ */
+$maxAttemptsPerExecution = 10; 
+$sleepBetweenAttempts = 15;    
+$currentAttempt = 0;
 
-$instances = $api->getInstances($config);
+while ($currentAttempt < $maxAttemptsPerExecution) {
+    $currentAttempt++;
+    echo "\n[" . date('H:i:s') . "] --- Iniciando Intento $currentAttempt de $maxAttemptsPerExecution ---\n";
 
-$existingInstances = $api->checkExistingInstances($config, $instances, $shape, $maxRunningInstancesOfThatShape);
-if ($existingInstances) {
-    echo "$existingInstances\n";
-    return;
-}
-
-if (!empty($config->availabilityDomains)) {
-    if (is_array($config->availabilityDomains)) {
-        $availabilityDomains = $config->availabilityDomains;
-    } else {
-        $availabilityDomains = [ $config->availabilityDomains ];
-    }
-} else {
-    $availabilityDomains = $api->getAvailabilityDomains($config);
-}
-
-foreach ($availabilityDomains as $availabilityDomainEntity) {
-    $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
     try {
-        $instanceDetails = $api->createInstance($config, $shape, getenv('OCI_SSH_PUBLIC_KEY'), $availabilityDomain);
-    } catch(ApiCallException $e) {
-        $message = $e->getMessage();
-        echo "$message\n";
-//            if ($notifier->isSupported()) {
-//                $notifier->notify($message);
-//            }
+        $instances = $api->getInstances($config);
+        $existingInstances = $api->checkExistingInstances($config, $instances, $shape, $maxRunningInstancesOfThatShape);
 
-        if (
-            $e->getCode() === 500 &&
-            strpos($message, 'InternalError') !== false &&
-            strpos($message, 'Out of host capacity') !== false
-        ) {
-            // trying next availability domain
-            sleep(16);
-            continue;
+        if ($existingInstances) {
+            echo "Aviso: $existingInstances\n";
+            return; // Ya tienes la instancia, no hace falta seguir.
         }
 
-        // current config is broken
+        if (!empty($config->availabilityDomains)) {
+            $availabilityDomains = is_array($config->availabilityDomains) ? $config->availabilityDomains : [ $config->availabilityDomains ];
+        } else {
+            $availabilityDomains = $api->getAvailabilityDomains($config);
+        }
+
+        foreach ($availabilityDomains as $availabilityDomainEntity) {
+            $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
+            
+            try {
+                $instanceDetails = $api->createInstance($config, $shape, getenv('OCI_SSH_PUBLIC_KEY'), $availabilityDomain);
+                
+                // --- CASO DE ÉXITO ---
+                $message = json_encode($instanceDetails, JSON_PRETTY_PRINT);
+                echo "¡INSTANCIA CREADA CON ÉXITO!\n$message\n";
+                
+                if ($notifier->isSupported()) {
+                    $notifier->notify("OCI ARM Success: \n" . $message);
+                }
+                return; // Finalizar ejecución completa por éxito.
+
+            } catch(ApiCallException $e) {
+                $message = $e->getMessage();
+                
+                // Verificamos si el error es falta de capacidad
+                $isOutOfCapacity = (
+                    $e->getCode() === 500 &&
+                    strpos($message, 'InternalError') !== false &&
+                    strpos($message, 'Out of host capacity') !== false
+                );
+
+                if ($isOutOfCapacity) {
+                    echo "Resultado: Sin capacidad en $availabilityDomain.\n";
+                } else {
+                    // Si es un error distinto (401 Auth, 404 Not Found, etc), paramos para revisar configuración
+                    echo "Error Crítico de API: $message\n";
+                    return; 
+                }
+            }
+        }
+
+    } catch (\Exception $generalException) {
+        echo "Error general en la ejecución: " . $generalException->getMessage() . "\n";
         return;
     }
 
-    // success
-    $message = json_encode($instanceDetails, JSON_PRETTY_PRINT);
-    echo "$message\n";
-    if ($notifier->isSupported()) {
-        $notifier->notify($message);
+    // Si no ha tenido éxito y quedan intentos, esperamos
+    if ($currentAttempt < $maxAttemptsPerExecution) {
+        echo "Esperando {$sleepBetweenAttempts}s para el próximo reintento...\n";
+        sleep($sleepBetweenAttempts);
     }
-
-    return;
 }
+
+echo "\nTerminada la tanda de intentos actual. GitHub Actions se cerrará hasta la próxima programación cron.\n";
